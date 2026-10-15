@@ -1,0 +1,11 @@
+{
+  "version": "1.0",
+  "type": "rich",
+  "title": "MirrOra 3D Interactive Web Viewer",
+  "author_name": "MirrOra Hardware Team",
+  "provider_name": "MirrOra 3D",
+  "provider_url": "https://mirrora-3d-viewer.vercel.app",
+  "width": 1280,
+  "height": 720,
+  "html": "<iframe src=\"https://mirrora-3d-viewer.vercel.app/\" width=\"100%\" height=\"100%\" frameborder=\"0\" allowfullscreen></iframe>"
+}
