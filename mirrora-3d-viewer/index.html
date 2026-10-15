@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0c111d">
+  <title>MirrOra - Interactive 3D Board Viewer</title>
+  
+  <!-- Favicon icon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+  
+  <!-- 3D Engines & Loaders: Three.js, Controls, MTLLoader, OBJLoader, GLTFLoader, Spline Viewer -->
+  <script src="./assets/three.min.js"></script>
+  <script src="./assets/OrbitControls.js"></script>
+  <script src="./assets/MTLLoader.js"></script>
+  <script src="./assets/OBJLoader.js"></script>
+  <script src="./assets/GLTFLoader.js"></script>
+  <script type="module" src="https://unpkg.com/@splinetool/viewer/build/spline-viewer.js"></script>
+  
+  <!-- Custom Stylesheet -->
+  <link rel="stylesheet" href="styles.css?v=2.2">
+  <style>
+    /* Critical CSS: Guarantee HUD is 100% hidden on first entry for Canva embed */
+    #hudHeader,
+    #hudTopRight,
+    #controlsPanel,
+    #inspectorCard,
+    #toastNotification {
+      opacity: 0 !important;
+      pointer-events: none !important;
+      visibility: hidden !important;
+      transition: opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1), transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
+    }
+    #hudHeader, #hudTopRight { transform: translateY(-24px) !important; }
+    #controlsPanel { transform: translate(-50%, 24px) !important; }
+    #inspectorCard { transform: translateX(24px) !important; }
+
+    body.hud-visible #hudHeader,
+    body.hud-visible #hudTopRight,
+    body.hud-visible #controlsPanel,
+    body.hud-visible #inspectorCard {
+      opacity: 1 !important;
+      pointer-events: auto !important;
+      visibility: visible !important;
+      transform: translateY(0) !important;
+    }
+    body.hud-visible #controlsPanel { transform: translate(-50%, 0) !important; }
+    body.hud-visible #inspectorCard { transform: translateX(0) !important; }
+    body.hud-visible #toastNotification { display: flex !important; }
+  </style>
+</head>
+<body>
+
+  <!-- Loading Screen Overlay -->
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="loader-card">
+      <div class="loader-spinner">
+        <div class="spinner-ring"></div>
+        <div class="spinner-core"></div>
+      </div>
+      <div class="loader-text">
+        <h3 id="loadingTitle">Memuat Model 3D PCB...</h3>
+        <p id="loadingSubtext">3D_PCB1_autoroute_2026-10-15.obj</p>
+      </div>
+      <div class="loader-progress-bar">
+        <div id="loaderProgress" class="loader-progress-fill"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HUD: Top Left Header & Hardware Status Badges -->
+  <header id="hudHeader" class="hud-header">
+    <div class="status-badges">
+      <div id="stageStatusPill" class="badge badge-stage">
+        <span class="live-dot"></span>
+        <span id="stageStatusText">STAGE LIVE 3D</span>
+      </div>
+      <div class="badge badge-chip">
+        <span class="badge-icon">⚡</span>
+        <span id="modelFileBadge">PCB1_AUTOROUTE</span>
+      </div>
+      <div class="badge badge-rev">
+        <span>149.5 × 59.7 mm</span>
+      </div>
+      <div id="turntableBadge" class="badge badge-turntable active">
+        <span class="badge-icon">🔄</span>
+        <span id="turntableBadgeText">TURNTABLE: ON</span>
+      </div>
+    </div>
+    <h1 class="project-title">MirrOra PCB 3D Viewer</h1>
+    <p class="controls-hint">
+      <span class="hint-item"><kbd>Klik Kiri</kbd> + Geser: Orbit 360°</span>
+      <span class="hint-sep">•</span>
+      <span class="hint-item"><kbd>Klik Kanan</kbd> / <kbd>Shift</kbd>: Pan</span>
+      <span class="hint-sep">•</span>
+      <span class="hint-item"><kbd>Scroll</kbd>: Zoom</span>
+    </p>
+  </header>
+
+  <!-- HUD: Top Right Actions (Record, Load Model, Shortcuts, Mode Switcher, Zen Toggle) -->
+  <div id="hudTopRight" class="hud-top-right">
+    <!-- Tombol Rekam Video 3D (Pintasan: V) -->
+    <button id="btnStartRecord" class="icon-btn btn-record" title="Mulai Rekam Video 3D Bebas UI [V]">
+      <span class="record-dot-static"></span>
+      <span class="btn-label">Rekam Video</span>
+    </button>
+    <!-- Dropdown / Popover Pemilih Warna Background (Pintasan: B) -->
+    <div class="bg-picker-wrapper">
+      <button id="btnToggleBg" class="icon-btn btn-bg-toggle" title="Pilih & Atur Warna Background [B]">
+        <span id="bgIcon">🎨</span>
+        <span id="bgLabel" class="btn-label">Warna BG</span>
+        <span class="dropdown-caret">▾</span>
+      </button>
+
+      <!-- Panel Popover Palet Warna -->
+      <div id="bgPickerDropdown" class="bg-picker-popover" style="display: none;">
+        <div class="popover-header">
+          <span class="popover-title">Pilih Warna Background</span>
+          <button id="btnCloseBgPicker" class="popover-close-btn" title="Tutup">&times;</button>
+        </div>
+        
+        <!-- Preset Swatches Cepat -->
+        <div class="swatches-label">Pilihan Cepat (Presets):</div>
+        <div class="color-swatches-grid">
+          <button class="swatch-btn active" data-color="#05070f" data-mode="dark" title="Dark Obsidian (Default CAD)">
+            <span class="swatch-disc" style="background: #05070f; border: 1px solid #334155;"></span>
+            <span class="swatch-text">Dark</span>
+          </button>
+          <button class="swatch-btn" data-color="#00ff00" data-mode="green" title="Green Screen (Chroma Key)">
+            <span class="swatch-disc" style="background: #00ff00;"></span>
+            <span class="swatch-text">Green</span>
+          </button>
+          <button class="swatch-btn" data-color="#ffffff" data-mode="white" title="Pure White Solid (Slide Canva)">
+            <span class="swatch-disc" style="background: #ffffff; border: 1px solid #cbd5e1;"></span>
+            <span class="swatch-text">White</span>
+          </button>
+          <button class="swatch-btn" data-color="#0022ff" data-mode="blue" title="Blue Screen (Chroma Key)">
+            <span class="swatch-disc" style="background: #0022ff;"></span>
+            <span class="swatch-text">Blue</span>
+          </button>
+          <button class="swatch-btn" data-color="#ff00ff" data-mode="magenta" title="Magenta Screen">
+            <span class="swatch-disc" style="background: #ff00ff;"></span>
+            <span class="swatch-text">Magenta</span>
+          </button>
+          <button class="swatch-btn" data-mode="transparent" title="Transparan (Alpha Channel)">
+            <span class="swatch-disc swatch-transparent"></span>
+            <span class="swatch-text">Transparan</span>
+          </button>
+        </div>
+
+        <div class="popover-divider"></div>
+
+        <!-- Custom Color & Hex Input -->
+        <div class="swatches-label">Pilih Warna Bebas (Custom):</div>
+        <div class="custom-color-row">
+          <label class="color-picker-label" title="Klik untuk membuka pemilih warna">
+            <input type="color" id="bgCustomColorInput" value="#05070f">
+            <span id="customColorDisc" class="color-picker-disc" style="background: #05070f;"></span>
+          </label>
+          <div class="hex-input-wrap">
+            <span class="hex-hash">#</span>
+            <input type="text" id="bgHexInput" class="hex-text-input" placeholder="05070F" value="05070F" maxlength="6" spellcheck="false">
+          </div>
+          <button id="btnEyeDropper" class="btn-eyedropper" title="Ambil warna langsung dari layar / slide Canva">
+            <span>💉</span>
+            <span>Pipet</span>
+          </button>
+        </div>
+
+        <div class="popover-divider"></div>
+
+        <!-- Checkbox Grid Lantai -->
+        <div class="grid-toggle-row">
+          <label class="checkbox-label">
+            <input type="checkbox" id="checkShowGrid" checked>
+            <span>Tampilkan Garis Lantai (Grid)</span>
+          </label>
+        </div>
+      </div>
+    </div>
+    <button id="btnLoadModel" class="icon-btn btn-highlight" title="Ganti / Muat Model 3D Lain [M]">
+      <span>📂</span>
+      <span class="btn-label">Model 3D</span>
+    </button>
+    <button id="btnShortcuts" class="icon-btn" title="Daftar Pintasan Keyboard [?]">
+      <span>⌨️</span>
+      <span class="btn-label">Pintasan</span>
+    </button>
+    <button id="btnToggleEngine" class="icon-btn" title="Ganti Mode 3D / Fallback Video">
+      <span id="engineIcon">📹</span>
+      <span id="engineLabel" class="btn-label">Video Fallback</span>
+    </button>
+    <button id="btnZenMode" class="icon-btn" title="Mode Presentasi Bersih (Sembunyikan HUD) [H]">
+      <span>👁️</span>
+      <span class="btn-label">Zen HUD</span>
+    </button>
+  </div>
+
+  <!-- Floating Active Recording HUD (Tampil ketika tombol rekam dipencet & UI lain minggir) -->
+  <div id="recordingHud" class="recording-hud" style="display: none;">
+    <div class="rec-status-wrap">
+      <span class="rec-live-dot"></span>
+      <span class="rec-title">MEREKAM 3D</span>
+      <span id="recTimer" class="rec-timer">00:00</span>
+      <span class="rec-quality-badge">60 FPS</span>
+    </div>
+    <button id="btnStopRecord" class="btn-stop-rec" title="Selesai & Simpan Video [V / Esc]">
+      <span class="stop-icon">⏹</span>
+      <span>Selesai & Unduh</span>
+    </button>
+  </div>
+
+  <!-- Toast Notification (Notifikasi Unduhan Selesai) -->
+  <div id="toastNotification" class="toast-notification" style="display: none;">
+    <span class="toast-icon">🎥</span>
+    <span id="toastMsg" class="toast-msg">Video rekaman berhasil diunduh ke folder Downloads!</span>
+  </div>
+
+  <!-- 3D Canvas Container: Three.js Real-time Canvas & Spline Viewer -->
+  <main id="stageContainer" class="stage-container">
+    <!-- Real-time 3D WebGL Canvas for 3D_PCB1_autoroute_2026-10-15.obj -->
+    <canvas id="threeCanvas" class="three-canvas"></canvas>
+
+    <!-- Spline Web Component (Used when custom Spline URL/File is loaded) -->
+    <spline-viewer
+      id="viewer"
+      loading-anim-type="spinner-small-light"
+      hint="false"
+      style="display: none;">
+    </spline-viewer>
+
+    <!-- Offline Fallback Video & Interactive Turntable Layer -->
+    <div id="fallbackContainer" class="fallback-container" style="display: none;">
+      <div class="fallback-banner">
+        <span class="fallback-dot"></span>
+        <span>Mode Cadangan Offline (Video Turntable) Aktif</span>
+      </div>
+      <video
+        id="fallbackVideo"
+        class="fallback-video"
+        src="./assets/fallback-turntable.mp4"
+        loop
+        muted
+        playsinline
+        autoplay>
+      </video>
+      <div id="fallbackTouchSurface" class="fallback-touch-surface" title="Geser ke kiri / kanan untuk memutar manual"></div>
+      <div class="fallback-controls-hint">
+        <span>Geser horizontal untuk scrub rotasi 360°</span>
+      </div>
+    </div>
+  </main>
+
+  <!-- HUD: Bottom Center Controls Panel (Dock) -->
+  <nav id="controlsPanel" class="controls-panel">
+    <!-- Camera Presets -->
+    <div class="control-group presets-group">
+      <button id="btnPresetIso" class="btn preset-btn active" data-preset="iso" title="Sudut Isometrik 45° [1]">
+        <svg class="btn-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        </svg>
+        <span>Isometric 45°</span>
+      </button>
+
+      <button id="btnPresetPort" class="btn preset-btn" data-preset="port" title="Fokus Area Konektor & Port [2]">
+        <svg class="btn-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="7" width="20" height="10" rx="3"/>
+          <path d="M7 11h10M7 13h10"/>
+        </svg>
+        <span>Port Focus</span>
+      </button>
+
+      <button id="btnResetView" class="btn" title="Kembali ke Orientasi Awal [R]">
+        <svg class="btn-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+          <path d="M3 3v5h5"/>
+        </svg>
+        <span>Reset</span>
+      </button>
+    </div>
+
+    <div class="dock-divider"></div>
+
+    <!-- Turntable, Speed, Auto-Tour & Fullscreen Controls -->
+    <div class="control-group actions-group">
+      <button id="btnToggleRotate" class="btn btn-turntable active" title="Jeda/Lanjutkan Rotasi Otomatis [Spasi]">
+        <span id="rotateIcon" class="btn-icon">⏸️</span>
+        <span id="rotateText">Auto-Rotate</span>
+      </button>
+
+      <button id="btnRotateSpeed" class="btn btn-speed" title="Ubah Kecepatan Putar [+/-]">
+        <span class="speed-icon">⚡</span>
+        <span id="rotateSpeedText">5.0x</span>
+      </button>
+
+      <button id="btnToggleTour" class="btn btn-tour active" title="Auto-Tour Sinematik (Iso 360° ➔ Port 360° ➔ Loop) [T]">
+        <span class="btn-icon">🎬</span>
+        <span id="tourText">Auto-Tour</span>
+      </button>
+
+      <button id="btnToggleFullscreen" class="btn btn-fullscreen" title="Layar Penuh [F / F11]">
+        <svg id="fullscreenIconEnter" class="btn-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+        </svg>
+        <svg id="fullscreenIconExit" class="btn-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;">
+          <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
+        </svg>
+        <span id="fullscreenText">Fullscreen</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- HUD: Bottom Right Hardware Inspector Spec Card -->
+  <aside id="inspectorCard" class="inspector-card">
+    <div class="inspector-header">
+      <div class="inspector-title-row">
+        <span class="inspector-indicator"></span>
+        <h4 id="inspectorTitle">MirrOra PCB Module (EasyEDA)</h4>
+      </div>
+      <button id="btnToggleInspector" class="inspector-minimize-btn" title="Minimalkan Info">−</button>
+    </div>
+    <div id="inspectorBody" class="inspector-body">
+      <div class="spec-row">
+        <span class="spec-label">Berkas 3D</span>
+        <span id="specSubstrate" class="spec-value">3D_PCB1_autoroute_2026-10-15.obj</span>
+      </div>
+      <div class="spec-row">
+        <span class="spec-label">Dimensi Board</span>
+        <span id="specSoc" class="spec-value">149.5 mm × 59.7 mm (T: 13.1 mm)</span>
+      </div>
+      <div class="spec-row">
+        <span class="spec-label">Format / CAD</span>
+        <span id="specPower" class="spec-value">EasyEDA Pro (OBJ + MTL Shader)</span>
+      </div>
+      <div class="spec-row">
+        <span class="spec-label">Angle Aktif</span>
+        <span id="specAngle" class="spec-value highlight">Isometric 45° (Turntable)</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Load 3D Model Modal -->
+  <div id="loadModal" class="modal-backdrop" style="display: none;">
+    <div class="modal-card modal-card-large">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <span class="modal-icon">📦</span>
+          <h3>Manajemen Model 3D PCB</h3>
+        </div>
+        <button id="btnCloseLoadModal" class="modal-close-btn">&times;</button>
+      </div>
+      
+      <div class="modal-tabs">
+        <button id="tabBtnActiveModel" class="modal-tab-btn active" data-tab="active">Model Aktif (3D_PCB1)</button>
+        <button id="tabBtnUrl" class="modal-tab-btn" data-tab="url">Link Spline (.splinecode)</button>
+        <button id="tabBtnFile" class="modal-tab-btn" data-tab="file">Unggah File Lain (.obj / .glb)</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Tab 1: Current Active User Model -->
+        <div id="tabContentActive" class="tab-content active">
+          <div class="default-model-card">
+            <h4>✅ Model PCB EasyEDA Kamu Telah Dimuat</h4>
+            <p><strong>Berkas:</strong> <code>3D_PCB1_autoroute_2026-10-15.obj</code> + <code>.mtl</code></p>
+            <p style="margin-top: 6px;">Model 3D PCB hasil autoroute EasyEDA dari folder Downloads kamu telah dimuat secara otomatis ke dalam stage 3D lengkap dengan material warna dan tata letak fisiknya.</p>
+            <button id="btnReloadUserPcb" class="btn btn-primary" style="margin-top: 14px;">
+              Muat Ulang Model PCB Ini
+            </button>
+          </div>
+        </div>
+
+        <!-- Tab 2: Spline URL Input -->
+        <div id="tabContentUrl" class="tab-content" style="display: none;">
+          <p class="tab-desc">Jika kamu juga mengekspor model ini ke Spline, masukkan tautan publiknya:</p>
+          <div class="url-input-wrap">
+            <input
+              type="text"
+              id="inputSplineUrl"
+              class="url-input"
+              placeholder="https://prod.spline.design/xxxxxx/scene.splinecode"
+              spellcheck="false">
+            <button id="btnApplySplineUrl" class="btn btn-primary">Terapkan & Muat</button>
+          </div>
+          
+          <div class="spline-guide-box">
+            <h4>💡 Cara Mendapatkan Link dari Spline:</h4>
+            <ol class="guide-steps">
+              <li>Import berkas OBJ ke <a href="https://spline.design" target="_blank" rel="noopener">spline.design</a>.</li>
+              <li>Klik tombol <strong>Export</strong> di pojok kanan atas.</li>
+              <li>Pilih opsi <strong>Viewer</strong>, lalu klik <strong>Publish</strong>.</li>
+              <li>Salin URL berakhiran <code>/scene.splinecode</code> dan tempelkan di sini.</li>
+            </ol>
+          </div>
+        </div>
+
+        <!-- Tab 3: Local File Upload / Dropzone -->
+        <div id="tabContentFile" class="tab-content" style="display: none;">
+          <div id="dropZone" class="file-dropzone">
+            <span class="dropzone-icon">📁</span>
+            <h4>Tarik & Letakkan Berkas 3D ke Sini</h4>
+            <p>Mendukung format <code>.obj</code>, <code>.glb</code>, <code>.gltf</code>, dan <code>.splinecode</code></p>
+            <label class="btn btn-secondary file-upload-label">
+              <span>Pilih Berkas dari Komputer</span>
+              <input type="file" id="fileInput" accept=".obj,.glb,.gltf,.splinecode" style="display: none;">
+            </label>
+          </div>
+        </div>
+      </div>
+      
+      <div class="modal-footer">
+        <span id="loadModalStatus" class="load-status-msg">Model aktif: 3D_PCB1_autoroute_2026-10-15.obj</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Keyboard Shortcuts Modal -->
+  <div id="shortcutsModal" class="modal-backdrop" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <span class="modal-icon">⌨️</span>
+          <h3>Pintasan Keyboard Presenter</h3>
+        </div>
+        <button id="btnCloseShortcuts" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="shortcuts-grid">
+          <div class="shortcut-item">
+            <kbd>V</kbd>
+            <span>Mulai / Berhenti Rekam Video 3D (Otomatis Bersihkan UI)</span>
+          </div>
+          <div class="shortcut-item">
+            <kbd>B</kbd>
+            <span>Ganti Background (Dark / Transparan / Green Screen / White)</span>
+          </div>
+          <div class="shortcut-item">
+            <kbd>+</kbd> / <kbd>-</kbd>
+            <span>Percepat / Perlambat Kecepatan Rotasi Turntable</span>
+          </div>
+          <div class="shortcut-item">
+            <kbd>Spasi</kbd>
+            <span>Jeda / Lanjutkan Auto-Rotate (Turntable)</span>
+          </div>
+          <div class="shortcut-item">
+            <kbd>T</kbd>
+            <span>Auto-Tour Sinematik (Isometric 360° ➔ Port 360° ➔ Loop)</span>
+          </div>
+          <div class="shortcut-item">
+            <kbd>1</kbd>
+            <span>Preset Sudut Isometrik 45°</span>
+          </div>
+          <div class="shortcut-item">
+            <kbd>2</kbd>
+            <span>Preset Fokus Area Port & Konektor</span>
+          </div>
+          <div class="shortcut-item">
+            <kbd>R</kbd>
+            <span>Reset View ke Orientasi Awal</span>
+          </div>
+          <div class="shortcut-item">
+            <kbd>M</kbd>
+            <span>Buka Dialog Manajemen Model 3D</span>
+          </div>
+          <div class="shortcut-item">
+            <kbd>F</kbd> / <kbd>F11</kbd>
+            <span>Masuk / Keluar Layar Penuh (Fullscreen)</span>
+          </div>
+          <div class="shortcut-item">
+            <kbd>H</kbd>
+            <span>Zen Mode (Sembunyikan / Tampilkan HUD)</span>
+          </div>
+          <div class="shortcut-item">
+            <kbd>?</kbd>
+            <span>Buka / Tutup Panduan Pintasan Ini</span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <span>Tekan tombol apa saja untuk kembali ke presentasi.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Zen Mode Floating Restore Button (Visible only when HUD is hidden) -->
+  <button id="btnRestoreHud" class="btn-restore-hud" style="display: none;" title="Kembalikan Tampilan HUD [H]">
+    <span>👁️ Tampilkan HUD</span>
+  </button>
+
+  <!-- Application Logic -->
+  <script src="script.js?v=2.2"></script>
+</body>
+</html>
